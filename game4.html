@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Морской Бой — Умный ИИ</title>
+    <style>
+        :root {
+            --bg: #eef2f7;
+            --cell-size: 34px;
+            --ship-grad: linear-gradient(180deg, #4b5563 0%, #1f2937 100%);
+            --accent: #2563eb;
+        }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); display: flex; flex-direction: column; align-items: center; margin: 0; padding: 20px; color: #1e293b; }
+        
+        .header { text-align: center; margin-bottom: 20px; }
+        #status { font-size: 1.3rem; font-weight: 700; color: var(--accent); margin-top: 10px; min-height: 1.6em; }
+
+        .layout { display: flex; gap: 40px; justify-content: center; flex-wrap: wrap; }
+        
+        .board-container { background: white; padding: 10px; border-radius: 12px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); display: grid; grid-template-columns: 30px auto; grid-template-rows: 30px auto; }
+        .letters { grid-column: 2; display: flex; }
+        .letters div { width: var(--cell-size); text-align: center; font-size: 12px; font-weight: bold; color: #94a3b8; }
+        .numbers { grid-row: 2; display: flex; flex-direction: column; }
+        .numbers div { height: var(--cell-size); line-height: var(--cell-size); text-align: center; font-size: 12px; font-weight: bold; color: #94a3b8; width: 30px; }
+
+        .grid { display: grid; grid-template-columns: repeat(10, var(--cell-size)); grid-template-rows: repeat(10, var(--cell-size)); background: #cbd5e1; border: 1px solid #94a3b8; gap: 1px; }
+        .cell { width: var(--cell-size); height: var(--cell-size); background: white; position: relative; cursor: crosshair; }
+        
+        .cell.ship-part { background: var(--ship-grad); border-radius: 4px; box-shadow: inset 0 2px 4px rgba(255,255,255,0.2); }
+        .cell.ship-part::before { content: ""; position: absolute; width: 4px; height: 4px; background: rgba(255,255,255,0.3); border-radius: 50%; top: 5px; left: 5px; }
+
+        .cell.miss::after { content: ""; position: absolute; width: 8px; height: 8px; background: #94a3b8; border-radius: 50%; left: 13px; top: 13px; opacity: 0.6; }
+        .cell.hit { background: #fee2e2; }
+        .cell.hit::before, .cell.hit::after { content: ''; position: absolute; width: 2px; height: 24px; background: #ef4444; left: 16px; top: 5px; transform: rotate(45deg); }
+        .cell.hit::after { transform: rotate(-45deg); }
+        .cell.dead { background: #334155 !important; }
+
+        .enemy .cell.ship-part { background: white; box-shadow: none; }
+        .enemy .cell.ship-part::before { display: none; }
+
+        .dock { margin-top: 30px; display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; background: white; padding: 20px; border-radius: 15px; }
+        .ship-model { display: flex; cursor: grab; background: var(--ship-grad); border-radius: 6px; border: 2px solid #1e2937; }
+        .ship-model.vertical { flex-direction: column; }
+        .ship-model div { width: var(--cell-size); height: var(--cell-size); border: 1px solid rgba(255,255,255,0.1); }
+        
+        .btn { padding: 12px 30px; border-radius: 10px; border: none; background: #2563eb; color: white; font-weight: 700; cursor: pointer; transition: 0.3s; }
+        .btn:disabled { background: #cbd5e1; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>МОРСКОЙ БОЙ</h1>
+        <div id="status">Перетяните корабли. Клик на корабль — поворот.</div>
+    </div>
+
+    <div class="layout">
+        <div>
+            <h3>Ваш флот</h3>
+            <div class="board-container">
+                <div class="letters"><div>А</div><div>Б</div><div>В</div><div>Г</div><div>Д</div><div>Е</div><div>Ж</div><div>З</div><div>И</div><div>К</div></div>
+                <div class="numbers"><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div><div>10</div></div>
+                <div id="pBoard" class="grid"></div>
+            </div>
+        </div>
+        <div>
+            <h3>Флот противника</h3>
+            <div class="board-container">
+                <div class="letters"><div>А</div><div>Б</div><div>В</div><div>Г</div><div>Д</div><div>Е</div><div>Ж</div><div>З</div><div>И</div><div>К</div></div>
+                <div class="numbers"><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div><div>10</div></div>
+                <div id="eBoard" class="grid enemy"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="dock" class="dock"></div>
+    <div style="margin-top: 20px; display: flex; gap: 10px;">
+        <button id="startBtn" class="btn" disabled onclick="startGame()">В БОЙ!</button>
+        <button class="btn" style="background:#64748b" onclick="location.reload()">СБРОС</button>
+    </div>
+
+<script>
+    const pGrid = document.getElementById('pBoard');
+    const eGrid = document.getElementById('eBoard');
+    const status = document.getElementById('status');
+    const startBtn = document.getElementById('startBtn');
+
+    let pData = Array(100).fill(0), eData = Array(100).fill(0);
+    let pShips = [], eShips = [], isGameOn = false, currentDrag = null;
+
+    // Логика Умного ИИ
+    let botTargets = []; // Клетки для обстрела при попадании
+    let lastHitIdx = null; // Последнее попадание
+
+    function init() {
+        for(let i=0; i<100; i++) {
+            const pCell = document.createElement('div');
+            pCell.className = 'cell';
+            pCell.ondragover = e => e.preventDefault();
+            pCell.ondrop = () => handleDrop(i);
+            pGrid.appendChild(pCell);
+
+            const eCell = document.createElement('div');
+            eCell.className = 'cell';
+            eCell.onclick = () => playerAttack(i);
+            eGrid.appendChild(eCell);
+        }
+        createDock();
+    }
+
+    function createDock() {
+        [4, 3, 3, 2, 2, 2, 1, 1, 1, 1].forEach(size => {
+            const ship = document.createElement('div');
+            ship.className = 'ship-model';
+            ship.draggable = true;
+            ship.dataset.size = size;
+            ship.dataset.hor = "true";
+            for(let i=0; i<size; i++) ship.appendChild(document.createElement('div'));
+            ship.onclick = () => {
+                ship.dataset.hor = ship.dataset.hor === "true" ? "false" : "true";
+                ship.classList.toggle('vertical');
+            };
+            ship.ondragstart = () => currentDrag = ship;
+            document.getElementById('dock').appendChild(ship);
+        });
+    }
+
+    function handleDrop(idx) {
+        const size = parseInt(currentDrag.dataset.size), hor = currentDrag.dataset.hor === "true";
+        const coords = getCoords(idx, size, hor);
+        if(coords && isValidPlace(pData, coords)) {
+            coords.forEach(c => { pData[c] = 1; pGrid.children[c].classList.add('ship-part'); });
+            pShips.push({ cells: coords, alive: true });
+            currentDrag.remove();
+            if(document.getElementById('dock').children.length === 0) startBtn.disabled = false;
+        }
+    }
+
+    function getCoords(start, size, hor) {
+        let res = [], x = start % 10, y = Math.floor(start / 10);
+        for(let i=0; i<size; i++) {
+            let cx = hor ? x + i : x, cy = hor ? y : y + i;
+            if(cx > 9 || cy > 9) return null;
+            res.push(cy * 10 + cx);
+        }
+        return res;
+    }
+
+    function isValidPlace(grid, coords) {
+        return coords.every(idx => {
+            if(grid[idx] !== 0) return false;
+            let cx = idx % 10, cy = Math.floor(idx / 10);
+            for(let y=-1; y<=1; y++) for(let x=-1; x<=1; x++) {
+                let nx = cx+x, ny = cy+y;
+                if(nx>=0 && nx<10 && ny>=0 && ny<10 && grid[ny*10+nx] === 1) return false;
+            }
+            return true;
+        });
+    }
+
+    function startGame() {
+        isGameOn = true; document.getElementById('dock').style.display = 'none';
+        startBtn.disabled = true; status.innerText = "Ваш ход!"; genEnemy();
+    }
+
+    function genEnemy() {
+        [4, 3, 3, 2, 2, 2, 1, 1, 1, 1].forEach(size => {
+            let ok = false;
+            while(!ok) {
+                let i = Math.floor(Math.random()*100), h = Math.random() > 0.5;
+                let c = getCoords(i, size, h);
+                if(c && isValidPlace(eData, c)) {
+                    c.forEach(idx => eData[idx] = 1);
+                    eShips.push({ cells: c, alive: true });
+                    ok = true;
+                }
+            }
+        });
+    }
+
+    function playerAttack(i) {
+        if(!isGameOn || eData[i] > 1) return;
+        if(eData[i] === 1) {
+            eData[i] = 3; eGrid.children[i].classList.add('hit');
+            processSinking(eShips, eData, eGrid);
+            if(checkWin(eShips, eData)) endGame("ВЫ ПОБЕДИЛИ!");
+        } else {
+            eData[i] = 2; eGrid.children[i].classList.add('miss');
+            isGameOn = false; status.innerText = "Ход ИИ...";
+            setTimeout(botAttack, 600);
+        }
+    }
+
+    // ЛОГИКА УМНОГО БОТА
+    function botAttack() {
+        if(!isGameOn && status.innerText.includes("ПОБЕДА")) return;
+        let idx;
+
+        if (botTargets.length > 0) {
+            idx = botTargets.shift();
+        } else {
+            // Стратегия "Шахматный порядок"
+            let available = [];
+            for(let i=0; i<100; i++) {
+                if(pData[i] < 2 && (Math.floor(i/10) + (i%10)) % 2 === 0) available.push(i);
+            }
+            if(available.length === 0) {
+                for(let i=0; i<100; i++) if(pData[i] < 2) available.push(i);
+            }
+            idx = available[Math.floor(Math.random() * available.length)];
+        }
+
+        if(pData[idx] === 1) {
+            pData[idx] = 3; pGrid.children[idx].classList.add('hit');
+            lastHitIdx = idx;
+            // Добавляем соседей для проверки
+            let cx = idx % 10, cy = Math.floor(idx / 10);
+            [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dx, dy]) => {
+                let nx = cx+dx, ny = cy+dy;
+                if(nx>=0 && nx<10 && ny>=0 && ny<10) {
+                    let nIdx = ny*10+nx;
+                    if(pData[nIdx] < 2 && !botTargets.includes(nIdx)) botTargets.unshift(nIdx);
+                }
+            });
+            
+            if(processSinking(pShips, pData, pGrid)) {
+                botTargets = []; // Корабль убит, сбрасываем цели
+            }
+            
+            if(checkWin(pShips, pData)) endGame("ВЫ ПРОИГРАЛИ!");
+            else setTimeout(botAttack, 600);
+        } else {
+            pData[idx] = 2; pGrid.children[idx].classList.add('miss');
+            isGameOn = true; status.innerText = "Ваш ход!";
+        }
+    }
+
+    function processSinking(ships, grid, board) {
+        let sunkAny = false;
+        ships.forEach(s => {
+            if(s.alive && s.cells.every(c => grid[c] === 3)) {
+                s.alive = false; sunkAny = true;
+                s.cells.forEach(c => {
+                    grid[c] = 4; board.children[c].classList.add('dead');
+                    let cx = c % 10, cy = Math.floor(c / 10);
+                    for(let y=-1; y<=1; y++) for(let x=-1; x<=1; x++) {
+                        let nx = cx+x, ny = cy+y;
+                        if(nx>=0 && nx<10 && ny>=0 && ny<10) {
+                            let nIdx = ny*10+nx;
+                            if(grid[nIdx] === 0) { grid[nIdx] = 2; board.children[nIdx].classList.add('miss'); }
+                        }
+                    }
+                });
+            }
+        });
+        return sunkAny;
+    }
+
+    function checkWin(ships, grid) { return ships.every(s => s.cells.every(c => grid[c] >= 3)); }
+    function endGame(txt) { status.innerText = txt; isGameOn = false; }
+
+    init();
+</script>
+</body>
+</html>
